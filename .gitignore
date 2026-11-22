@@ -1,0 +1,8 @@
+.ytdlp_cookie
+.agent_tmp/
+__pycache__/
+server.log
+.jobs.json
+*.har
+.venv/
+.render_key

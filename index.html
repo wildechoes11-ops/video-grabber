@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Grabber</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #12151d;
+    --panel-2: #171b25;
+    --line: #232936;
+    --text: #e6e9f0;
+    --muted: #8a93a6;
+    --accent: #5b8cff;
+    --accent-2: #7ee0b8;
+    --warn: #ffb454;
+    --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(1200px 600px at 15% -10%, #1a2440 0%, transparent 60%), var(--bg);
+    color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 40px 20px 60px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 26px; font-size: 14px; }
+
+  .card {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input[type="url"], select {
+    background: #0d1017;
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    outline: none;
+  }
+  input[type="url"] { flex: 1 1 380px; min-width: 0; }
+  input[type="url"]:focus, select:focus { border-color: var(--accent); }
+  button {
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: #0a0d14;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+
+  .preview { display: flex; gap: 12px; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #0d1017; }
+  .preview img { width: 150px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: #000; flex: 0 0 auto; }
+  .pv-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .pv-sub { color: var(--muted); font-size: 12.5px; }
+  .live-badge { display: inline-block; background: #e0332f; color: #fff; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; padding: 2px 7px; border-radius: 4px; margin-right: 8px; vertical-align: 1px; }
+
+  .bar { height: 8px; background: #0d1017; border-radius: 999px; overflow: hidden; margin: 16px 0 10px; }
+  .bar > i {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.4s ease;
+  }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--muted); background: #0d1017;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill[data-s="downloading"] { color: var(--accent); border-color: #2b3a63; }
+  .pill[data-s="downloading"] .dot { background: var(--accent); animation: pulse 1.2s infinite; }
+  .pill[data-s="ready"] { color: var(--accent-2); border-color: #22513f; }
+  .pill[data-s="ready"] .dot { background: var(--accent-2); }
+  .pill[data-s="error"] { color: var(--err); border-color: #5a2727; }
+  .pill[data-s="queued"] { color: var(--warn); border-color: #5a4526; }
+  .pill[data-s="queued"] .dot { background: var(--warn); }
+  .pill[data-s="error"] .dot { background: var(--err); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  video { width: 100%; border-radius: 10px; background: #000; display: block; }
+  .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  a.btn {
+    text-decoration: none; font-size: 14px; font-weight: 600;
+    padding: 11px 18px; border-radius: 10px; color: #0a0d14; background: var(--accent-2);
+  }
+  pre.log {
+    margin: 0; max-height: 240px; overflow: auto;
+    background: #0a0c11; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #9fb0c9; white-space: pre-wrap; word-break: break-all;
+  }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Video <span>Grabber</span></h1>
+  <p class="sub">Paste a video or live-stream link. It grabs the best quality up to 1080p, merges to MP4, then plays it here.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="url" type="url" placeholder="https://www.youtube.com/live/..." autocomplete="off" spellcheck="false" />
+      <select id="maxmin" title="Capture length for live streams">
+        <option value="1">1 min</option>
+        <option value="5">5 min</option>
+        <option value="15" selected>15 min</option>
+        <option value="30">30 min</option>
+      </select>
+      <button id="go">Grab</button>
+      <button id="halt" class="ghost" disabled>Stop</button>
+    </div>
+    <div class="preview hidden" id="preview">
+      <img id="pv-thumb" alt="" />
+      <div>
+        <div class="pv-title" id="pv-title"></div>
+        <div class="pv-sub"><span class="live-badge hidden" id="pv-live">LIVE</span><span id="pv-sub"></span></div>
+      </div>
+    </div>
+    <div class="bar"><i id="fill"></i></div>
+    <div class="meta">
+      <span class="pill" data-s="idle"><span class="dot"></span><span id="state">idle</span></span>
+      <span>elapsed <b id="m-elapsed">—</b></span>
+      <span>media <b id="m-media">—</b></span>
+      <span>size <b id="m-size">—</b></span>
+      <span>speed <b id="m-speed">—</b></span>
+    </div>
+    <p class="hint" id="hint">Live links start from the live edge. The <b>min</b> selector caps how long it records.</p>
+  </div>
+
+  <div class="card hidden" id="player-card">
+    <video id="player" controls playsinline preload="metadata"></video>
+    <div class="actions">
+      <a class="btn" id="dl" href="#" download>Download MP4</a>
+      <span class="hint" id="fname"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <pre class="log" id="log">waiting for a link…</pre>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let jobId = null, timer = null, lastStatus = null;
+
+const LABEL = {
+  starting: "starting", queued: "queued", downloading: "downloading", ready: "ready",
+  finished: "finished", stopped: "stopped", failed: "failed", error: "error",
+};
+
+function setState(s) {
+  const pill = document.querySelector(".pill");
+  pill.dataset.s = s;
+  $("state").textContent = LABEL[s] || s;
+}
+
+function fmtSecs(n) {
+  if (n == null) return "—";
+  const m = Math.floor(n / 60), s = n % 60;
+  return m ? `${m}m ${s}s` : `${s}s`;
+}
+
+function render(st) {
+  setState(st.status);
+  $("m-elapsed").textContent = fmtSecs(st.seconds);
+  $("m-media").textContent = st.elapsed || "—";
+  $("m-size").textContent = st.size || "—";
+  $("m-speed").textContent = st.speed || "—";
+
+  const pct = st.percent != null ? Math.min(100, st.percent) : (st.has_video ? 100 : null);
+  $("fill").style.width = pct != null ? pct + "%" : (st.status === "downloading" ? "100%" : "0%");
+  if (st.status === "downloading" && pct == null) {
+    $("fill").style.opacity = "0.5";
+  } else {
+    $("fill").style.opacity = "1";
+  }
+
+  const log = $("log");
+  log.textContent = (st.lines && st.lines.length ? st.lines.join("\n") : "waiting…");
+  log.scrollTop = log.scrollHeight;
+
+  if (st.has_video) {
+    const src = `/api/video/${jobId}`;
+    if ($("player").getAttribute("src") !== src) {
+      $("player").setAttribute("src", src);
+      $("player").load();
+    }
+    $("dl").href = `/api/download/${jobId}`;
+    $("fname").textContent = st.filename || "";
+    $("player-card").classList.remove("hidden");
+  }
+
+  if (st.status === "queued") {
+    $("hint").textContent = `queued — position ${st.queue_position}; ${st.concurrency_limit} jobs run at once`;
+  }
+  if (st.error) $("hint").textContent = st.error;
+
+  const done = ["ready", "finished", "stopped", "failed", "error"].includes(st.status);
+  if (done) {
+    clearInterval(timer); timer = null;
+    $("go").disabled = false;
+    $("halt").disabled = true;
+  }
+  lastStatus = st.status;
+}
+
+async function poll() {
+  if (!jobId) return;
+  try {
+    const r = await fetch(`/api/status/${jobId}`, { cache: "no-store" });
+    if (r.ok) render(await r.json());
+  } catch (e) { /* keep polling */ }
+}
+
+async function start() {
+  const url = $("url").value.trim();
+  if (!url) { $("url").focus(); return; }
+  $("go").disabled = true;
+  $("halt").disabled = false;
+  $("player-card").classList.add("hidden");
+  $("player").removeAttribute("src");
+  $("fill").style.width = "0%";
+  $("hint").textContent = "connecting…";
+  $("log").textContent = "connecting…";
+  try {
+    const r = await fetch("/api/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url, max_minutes: Number($("maxmin").value) }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "could not start");
+    jobId = data.job_id;
+    $("hint").textContent = "live links start from the live edge — press Stop when you have enough.";
+    clearInterval(timer);
+    timer = setInterval(poll, 1000);
+    poll();
+  } catch (e) {
+    $("go").disabled = false;
+    $("halt").disabled = true;
+    setState("error");
+    $("hint").textContent = e.message;
+  }
+}
+
+async function halt() {
+  if (!jobId) return;
+  $("halt").disabled = true;
+  try { await fetch(`/api/stop/${jobId}`, { method: "POST" }); } catch (e) {}
+  poll();
+}
+
+let previewTimer = null, previewFor = null;
+
+function showPreview(d) {
+  if (!d || !d.title) { $("preview").classList.add("hidden"); return; }
+  $("pv-thumb").src = d.thumbnail || "";
+  $("pv-title").textContent = d.title;
+  const bits = [d.channel, d.is_live ? null : d.duration ? `${Math.round(d.duration / 60)} min` : null,
+                d.qualities && d.qualities.length ? `up to ${Math.max(...d.qualities)}p` : null].filter(Boolean);
+  $("pv-sub").textContent = bits.join(" · ");
+  $("pv-live").classList.toggle("hidden", !d.is_live);
+  $("preview").classList.remove("hidden");
+}
+
+async function preview(url) {
+  if (!/^https?:\/\//.test(url) || url === previewFor) return;
+  previewFor = url;
+  try {
+    const r = await fetch(`/api/analyze?url=${encodeURIComponent(url)}`);
+    if (!r.ok) { $("preview").classList.add("hidden"); return; }
+    showPreview(await r.json());
+  } catch (e) { /* preview is best-effort */ }
+}
+
+$("url").addEventListener("input", (e) => {
+  clearTimeout(previewTimer);
+  const v = e.target.value.trim();
+  if (!v) { $("preview").classList.add("hidden"); return; }
+  previewTimer = setTimeout(() => preview(v), 700);
+});
+
+const preset = new URLSearchParams(location.search).get("job");
+if (preset) {
+  jobId = preset;
+  $("hint").textContent = "viewing a saved job";
+  timer = setInterval(poll, 1500);
+  poll();
+}
+
+$("go").addEventListener("click", start);
+$("halt").addEventListener("click", halt);
+$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
+</script>
+</body>
+</html>
