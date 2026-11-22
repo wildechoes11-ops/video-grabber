@@ -7,3 +7,4 @@ server.log
 .venv/
 .render_key
 .gh_key
+.openhands/
