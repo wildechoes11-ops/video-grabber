@@ -44,7 +44,16 @@ FFMPEG_RE = re.compile(r"size=\s*(\d+)\s*KiB.*?time=(\S+).*?(?:bitrate=\s*(\S+))
 SIZE_RE = re.compile(r"of\s+~?\s*([\d.]+\s*[KMG]iB)")
 FILE_RE = re.compile(r'href="(/(?:api/v1/file|download)/[^"]+)"')
 URL_RE = re.compile(r"^https?://[^\s\"'`;&|$<>\\]+$")
+YT_ID_RE = re.compile(r"(?:v=|/live/|/shorts/|youtu\.be/|/embed/)([A-Za-z0-9_-]{11})")
 DEST_RE = re.compile(r"\[download\] Destination: (.+)$")
+
+
+def youtube_id(*urls: str | None) -> str | None:
+    for url in urls:
+        match = YT_ID_RE.search(url or "")
+        if match:
+            return match.group(1)
+    return None
 
 
 def load_cookie() -> str:
@@ -426,8 +435,11 @@ def analyze(url: str):
         raise HTTPException(502, f"analyzer returned HTTP {resp.status_code}")
     data = resp.json()
     return {
-        key: data.get(key)
-        for key in ("title", "channel", "is_live", "qualities", "thumbnail", "duration", "viewer_count")
+        "video_id": youtube_id(data.get("webpage_url"), url),
+        **{
+            key: data.get(key)
+            for key in ("title", "channel", "is_live", "qualities", "thumbnail", "duration", "viewer_count")
+        },
     }
 
 

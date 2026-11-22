@@ -97,6 +97,13 @@
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 
   video { width: 100%; border-radius: 10px; background: #000; display: block; }
+  .live-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 14px; }
+  .live-head .spacer { flex: 1; }
+  .live-head a { color: var(--muted); font-size: 12.5px; text-decoration: none; border-bottom: 1px dotted var(--line); }
+  .live-head a:hover { color: var(--text); }
+  .live-head button { padding: 6px 12px; font-size: 12.5px; font-weight: 600; }
+  #live-frame { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: #000; display: block; }
+  .live-note { color: var(--muted); font-size: 12.5px; margin: 10px 0 0; }
   .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
   a.btn {
     text-decoration: none; font-size: 14px; font-weight: 600;
@@ -145,6 +152,18 @@
       <span>speed <b id="m-speed">—</b></span>
     </div>
     <p class="hint" id="hint">Live links start from the live edge. The <b>min</b> selector caps how long it records.</p>
+  </div>
+
+  <div class="card hidden" id="live-card">
+    <div class="live-head">
+      <span class="live-badge">LIVE</span>
+      <b id="live-title">watching the live stream</b>
+      <span class="spacer"></span>
+      <a id="live-open" target="_blank" rel="noopener">open on YouTube</a>
+      <button class="ghost" id="live-hide">Hide</button>
+    </div>
+    <iframe id="live-frame" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    <p class="live-note" id="live-note">Plays the live feed itself — grabbing still records separately below. If YouTube asks you to sign in, use “open on YouTube”.</p>
   </div>
 
   <div class="card hidden" id="player-card">
@@ -273,8 +292,31 @@ async function halt() {
 
 let previewTimer = null, previewFor = null;
 
+function showLive(d) {
+  const id = d && d.video_id;
+  const live = d && d.is_live && id;
+  if (!live) { hideLive(); return; }
+  $("live-title").textContent = d.title || "watching the live stream";
+  $("live-open").href = `https://www.youtube.com/watch?v=${id}`;
+  const frame = $("live-frame");
+  const want = `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&rel=0`;
+  if (frame.dataset.src !== want) {
+    frame.dataset.src = want;
+    frame.src = want;
+  }
+  $("live-card").classList.remove("hidden");
+}
+
+function hideLive() {
+  const frame = $("live-frame");
+  frame.removeAttribute("src");
+  delete frame.dataset.src;
+  $("live-card").classList.add("hidden");
+}
+
 function showPreview(d) {
-  if (!d || !d.title) { $("preview").classList.add("hidden"); return; }
+  if (!d || !d.title) { $("preview").classList.add("hidden"); hideLive(); return; }
+  showLive(d);
   $("pv-thumb").src = d.thumbnail || "";
   $("pv-title").textContent = d.title;
   const bits = [d.channel, d.is_live ? null : d.duration ? `${Math.round(d.duration / 60)} min` : null,
@@ -289,15 +331,17 @@ async function preview(url) {
   previewFor = url;
   try {
     const r = await fetch(`/api/analyze?url=${encodeURIComponent(url)}`);
-    if (!r.ok) { $("preview").classList.add("hidden"); return; }
+    if (!r.ok) { $("preview").classList.add("hidden"); hideLive(); return; }
     showPreview(await r.json());
   } catch (e) { /* preview is best-effort */ }
 }
 
+$("live-hide").addEventListener("click", hideLive);
+
 $("url").addEventListener("input", (e) => {
   clearTimeout(previewTimer);
   const v = e.target.value.trim();
-  if (!v) { $("preview").classList.add("hidden"); return; }
+  if (!v) { $("preview").classList.add("hidden"); hideLive(); return; }
   previewTimer = setTimeout(() => preview(v), 700);
 });
 
