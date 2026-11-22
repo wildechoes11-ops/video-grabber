@@ -129,6 +129,7 @@ PROXY_DETAILS_URL = os.environ.get(
     "PROXY_DETAILS_URL", "https://proxys-o6v0.onrender.com/proxy/details"
 )
 MAX_ATTEMPTS = 4
+PROXY_FIRST = os.environ.get("PROXY_FIRST", "") not in ("", "0", "false")
 _proxy: dict = {"url": None, "country": None, "expires": 0.0, "error": None}
 
 
@@ -288,9 +289,10 @@ def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
             outcome = "stopped"
             break
         job["attempt"] = attempt
-        # A fresh exit IP per job: concurrent jobs must not share one IP's rate limit.
-        proxy = get_proxy(force=True)
-        where = f"proxy {_proxy['country']}" if proxy else f"direct ({_proxy['error'] or 'no proxy'})"
+        # Direct first (fast, no proxy hop); rotate to a fresh exit IP only if that
+        # IP's quota is spent. PROXY_FIRST=1 forces the proxy from the start.
+        proxy = get_proxy(force=True) if (attempt > 1 or PROXY_FIRST) else None
+        where = f"proxy {_proxy['country']}" if proxy else "direct"
         log(job, f"attempt {attempt}/{MAX_ATTEMPTS} via {where}")
         outcome = stream_once(job, url, max_minutes, proxy)
         if outcome in ("ok", "stopped"):
