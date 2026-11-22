@@ -144,6 +144,8 @@ def get_proxy(force: bool = False) -> str | None:
         return url
     except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
         _proxy["error"] = f"{type(exc).__name__}: {exc}"[:200]
+        if _proxy["url"] and _proxy["expires"] > time.time() + 20:
+            return _proxy["url"]
         return None
 
 
@@ -277,7 +279,8 @@ def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
             outcome = "stopped"
             break
         job["attempt"] = attempt
-        proxy = get_proxy(force=attempt > 1)
+        # A fresh exit IP per job: concurrent jobs must not share one IP's rate limit.
+        proxy = get_proxy(force=True)
         where = f"proxy {_proxy['country']}" if proxy else f"direct ({_proxy['error'] or 'no proxy'})"
         log(job, f"attempt {attempt}/{MAX_ATTEMPTS} via {where}")
         outcome = stream_once(job, url, max_minutes, proxy)
