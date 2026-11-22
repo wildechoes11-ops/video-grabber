@@ -120,7 +120,7 @@ PROXY_DETAILS_URL = os.environ.get(
     "PROXY_DETAILS_URL", "https://proxys-o6v0.onrender.com/proxy/details"
 )
 MAX_ATTEMPTS = 4
-_proxy: dict = {"url": None, "country": None, "expires": 0.0}
+_proxy: dict = {"url": None, "country": None, "expires": 0.0, "error": None}
 
 
 def get_proxy(force: bool = False) -> str | None:
@@ -130,7 +130,7 @@ def get_proxy(force: bool = False) -> str | None:
     if not force and _proxy["url"] and _proxy["expires"] > time.time() + 20:
         return _proxy["url"]
     try:
-        data = requests.get(PROXY_DETAILS_URL, timeout=20).json()
+        data = requests.get(PROXY_DETAILS_URL, timeout=75).json()
         user = quote(str(data["proxy_user"]), safe="")
         password = quote(str(data["proxy_pass"]), safe="")
         url = f"http://{user}:{password}@{data['proxy_ip']}:{data['proxy_port']}"
@@ -140,8 +140,10 @@ def get_proxy(force: bool = False) -> str | None:
             country=data.get("country"),
             expires=min(expires, time.time() + 1500),
         )
+        _proxy["error"] = None
         return url
-    except (requests.RequestException, KeyError, TypeError, ValueError):
+    except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        _proxy["error"] = f"{type(exc).__name__}: {exc}"[:200]
         return None
 
 
@@ -276,7 +278,7 @@ def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
             break
         job["attempt"] = attempt
         proxy = get_proxy(force=attempt > 1)
-        where = f"proxy {_proxy['country']}" if proxy else "direct"
+        where = f"proxy {_proxy['country']}" if proxy else f"direct ({_proxy['error'] or 'no proxy'})"
         log(job, f"attempt {attempt}/{MAX_ATTEMPTS} via {where}")
         outcome = stream_once(job, url, max_minutes, proxy)
         if outcome in ("ok", "stopped"):
@@ -324,6 +326,17 @@ def api_index():
             "GET /api/stats": "running / queued / limit",
             "GET /healthz": "liveness",
         },
+    }
+
+
+@app.get("/api/proxy")
+def proxy_status():
+    url = get_proxy()
+    return {
+        "available": bool(url),
+        "country": _proxy["country"],
+        "expires": datetime.fromtimestamp(_proxy["expires"]).isoformat() if url else None,
+        "error": _proxy["error"],
     }
 
 
