@@ -1,12 +1,14 @@
 """Minimal dashboard: paste a video link, watch the download, play the result."""
 
 import html
+import io
 import json
 import os
 import re
 import threading
 import time
 import uuid
+import zipfile
 from datetime import datetime
 from collections import deque
 from urllib.parse import quote, unquote
@@ -367,6 +369,33 @@ def stats():
 @app.get("/")
 def index():
     return FileResponse(HERE / "index.html", media_type="text/html")
+
+
+BUNDLE_FILES = (
+    "app.py",
+    "index.html",
+    "requirements.txt",
+    "render.yaml",
+    "deploy_render.py",
+    "INTEGRATION.md",
+    ".gitignore",
+)
+
+
+@app.get("/video-grabber.zip")
+def bundle():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in BUNDLE_FILES:
+            path = HERE / name
+            if path.exists():
+                archive.write(path, name)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"content-disposition": 'attachment; filename="video-grabber.zip"'},
+    )
 
 
 @app.post("/api/start")
