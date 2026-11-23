@@ -87,7 +87,11 @@ Base URL is whatever host the app runs on. `GET /api` returns a machine-readable
 {"url": "https://www.youtube.com/live/QZiMlUz-138", "max_minutes": 15}
 ```
 
-`max_minutes` is clamped to 1..60 and only limits how long a live stream is recorded.
+| Field | Type | Meaning |
+|---|---|---|
+| `url` | str | the page to record |
+| `max_minutes` | int | cap on recording length, clamped 1..720 |
+| `whole` | bool | `true` → `live_from_now=0`, i.e. record from the start of the stream instead of from now |
 
 Response `200`: `{"job_id": "a654e1eb-..."}`
 
@@ -111,12 +115,16 @@ Returns immediately; the recording runs in a background thread.
   "filename": null,
   "error": null,
   "has_video": false,
+  "stored": false,
+  "local_size": 0,
+  "whole": false,
   "lines": ["attempt 1/4 via direct", "Running command: ..."]
 }
 ```
 
 `status` is one of: `queued` → `starting` → `downloading` → `ready`, plus terminal `failed`
-and `stopped`. Poll every 1–2 s. `queue_position` is 1-based and only non-zero while `queued`.
+and `stopped`. `stored` flips to true once the finished file has been copied to local disk
+(a few seconds after `ready`); until then the file is still being read from upstream. Poll every 1–2 s. `queue_position` is 1-based and only non-zero while `queued`.
 `lines` is the last 120 log lines (HTML already stripped) — surface them in any UI you build.
 
 ### `GET /api/video/{job_id}`
@@ -150,6 +158,15 @@ Metadata preview, no recording. Response:
 ```
 
 `video_id` is derived locally from the URL (`watch?v=`, `/live/`, `/shorts/`, `youtu.be/`, `/embed/`).
+
+### `GET /api/files`
+
+Lists everything kept on local disk:
+
+```json
+{"count": 2, "total_bytes": 734003200,
+ "files": [{"name": "da7793a1__stream.mp4", "bytes": 524288000, "path": "/app/downloads/da7793a1__stream.mp4"}]}
+```
 
 ### `GET /api/stats`
 
@@ -227,6 +244,23 @@ If you disable proxies (`PROXY_DETAILS_URL=""`), everything still works until th
 quota is exhausted, then every job fails with a quota error. That is a deliberate trade, not a bug.
 
 ---
+
+## 7b. Storage
+
+Finished files are copied to `downloads/` next to `app.py` as `<job_id[:8]>__<name>.mp4`.
+Why: the upstream copy expires, and `/api/video/{id}` must keep working afterwards.
+
+- The copy runs in its own thread right after the job reports `ready`; poll `status.stored`.
+- Once present, `/api/video/{id}` and `/api/download/{id}` serve **from disk** with a hand-rolled
+  Range responder (`serve_disk`), so seeking works and upstream is never touched again.
+- Before the copy finishes (and if it fails) both routes fall back to streaming from upstream.
+- On Render the disk is ephemeral: files vanish on redeploy. Use `GET /api/files` + `--disk` or a
+  real volume if you need persistence there.
+
+Capturing a whole live stream: `{"whole": true, "max_minutes": 480}`. `whole` maps to
+`live_from_now=0` so the recorder starts at the beginning of the available window rather than the
+live edge; `live_stop=1` ends it when the stream does. Live jobs never report `percent` — the
+total size is unknown — so watch `size`/`elapsed` and the log lines instead.
 
 ## 8. Concurrency model
 

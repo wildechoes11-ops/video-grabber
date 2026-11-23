@@ -22,6 +22,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 UPSTREAM = "https://ytdlp.online"
 HERE = Path(__file__).parent
 COOKIE_FILE = HERE / ".ytdlp_cookie"
+DOWNLOADS = HERE / "downloads"
+DOWNLOADS.mkdir(exist_ok=True)
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36"
@@ -161,7 +163,9 @@ def get_proxy(force: bool = False) -> str | None:
         return None
 
 
-def stream_once(job: dict, url: str, max_minutes: int, proxy: str | None) -> str:
+def stream_once(
+    job: dict, url: str, max_minutes: int, proxy: str | None, whole: bool = False
+) -> str:
     """One upstream attempt. Returns ok | quota | retry | stopped."""
     command = (
         f'-f "bv*[height<=1080]+ba/b[height<=1080]/best" '
@@ -176,7 +180,7 @@ def stream_once(job: dict, url: str, max_minutes: int, proxy: str | None) -> str
         "source": "lp",
         "max_minutes": str(max_minutes),
         "live_stop": "1",
-        "live_from_now": "1",
+        "live_from_now": "0" if whole else "1",
     }
     headers = {
         **BASE_HEADERS,
@@ -270,20 +274,50 @@ def stream_once(job: dict, url: str, max_minutes: int, proxy: str | None) -> str
     return "stopped" if job["stop"] else "retry"
 
 
-def run_job(job: dict, url: str, max_minutes: int) -> None:
+def save_local(job: dict) -> None:
+    """Pull the finished file off upstream and keep it — upstream files expire."""
+    name = re.sub(r"[^\w.\- ]+", "_", job["filename"] or f"{job['id']}.mp4")
+    target = DOWNLOADS / f"{job['id'][:8]}__{name}"
+    partial = target.with_suffix(target.suffix + ".part")
+    try:
+        with requests.get(
+            UPSTREAM + job["file_path"],
+            headers={**BASE_HEADERS, "cookie": load_cookie()},
+            stream=True,
+            timeout=(25, 300),
+        ) as resp:
+            resp.raise_for_status()
+            with open(partial, "wb") as handle:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    handle.write(chunk)
+        partial.replace(target)
+        job["local_path"] = str(target)
+        job["stored"] = True
+        log(job, f"stored locally: {target.name} ({target.stat().st_size / 1e6:.1f} MB)")
+    except (requests.RequestException, OSError) as exc:
+        partial.unlink(missing_ok=True)
+        log(job, f"local copy failed: {exc}")
+
+
+def run_job(job: dict, url: str, max_minutes: int, whole: bool = False) -> None:
     job["status"] = "queued"
     SLOTS.acquire()
     with RUNNING_LOCK:
         RUNNING["count"] += 1
     try:
-        _run_attempts(job, url, max_minutes)
+        _run_attempts(job, url, max_minutes, whole)
+    except Exception as exc:  # a dead thread must still leave a terminal status
+        log(job, f"internal error: {type(exc).__name__}: {exc}")
+        job["error"] = f"{type(exc).__name__}: {exc}"
+        job["status"] = "failed"
+        job["ended"] = time.time()
     finally:
         with RUNNING_LOCK:
             RUNNING["count"] -= 1
         SLOTS.release()
 
 
-def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
+def _run_attempts(job: dict, url: str, max_minutes: int, whole: bool = False) -> None:
     job["status"] = "downloading"
     outcome = "retry"
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -296,7 +330,7 @@ def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
         proxy = get_proxy(force=True) if (attempt > 1 or PROXY_FIRST) else None
         where = f"proxy {_proxy['country']}" if proxy else "direct"
         log(job, f"attempt {attempt}/{MAX_ATTEMPTS} via {where}")
-        outcome = stream_once(job, url, max_minutes, proxy)
+        outcome = stream_once(job, url, max_minutes, proxy, whole)
         if outcome in ("ok", "stopped"):
             break
         if outcome == "quota":
@@ -308,6 +342,7 @@ def _run_attempts(job: dict, url: str, max_minutes: int) -> None:
         job["status"] = "ready"
         job["error"] = None
         save_jobs()
+        threading.Thread(target=save_local, args=(job,), daemon=True).start()
     elif job["stop"]:
         job["status"] = "stopped"
     else:
@@ -354,6 +389,14 @@ def proxy_status():
         "expires": datetime.fromtimestamp(_proxy["expires"]).isoformat() if url else None,
         "error": _proxy["error"],
     }
+
+
+@app.get("/api/files")
+def files():
+    items = []
+    for path in sorted(DOWNLOADS.glob("*.mp4")):
+        items.append({"name": path.name, "bytes": path.stat().st_size, "path": str(path)})
+    return {"count": len(items), "total_bytes": sum(i["bytes"] for i in items), "files": items}
 
 
 @app.get("/api/stats")
@@ -407,13 +450,15 @@ async def start(request: Request):
     if not URL_RE.match(url):
         raise HTTPException(400, "that does not look like a plain http(s) video link")
     try:
-        max_minutes = max(1, min(int(body.get("max_minutes") or 15), 60))
+        max_minutes = max(1, min(int(body.get("max_minutes") or 15), 720))
     except (TypeError, ValueError):
         max_minutes = 15
+    whole = bool(body.get("whole"))
     job_id = new_job()
     job = JOBS[job_id]
+    job["whole"] = whole
     threading.Thread(
-        target=run_job, args=(job, url, max_minutes), daemon=True
+        target=run_job, args=(job, url, max_minutes, whole), daemon=True
     ).start()
     return {"job_id": job_id}
 
@@ -445,6 +490,9 @@ def status(job_id: str):
         "error": job["error"],
         "seconds": round(now - job["started"]),
         "has_video": bool(job["file_path"]),
+        "stored": bool(local_file(job)),
+        "local_size": Path(job["local_path"]).stat().st_size if local_file(job) else 0,
+        "whole": job.get("whole", False),
         "lines": list(job["lines"])[-120:],
     }
 
@@ -502,11 +550,56 @@ def upstream_file(job: dict, range_header: str | None) -> requests.Response:
     )
 
 
+def serve_disk(path: Path, request: Request, media_type: str, filename: str | None = None):
+    size = path.stat().st_size
+    start, end, status = 0, size - 1, 200
+    headers = {"accept-ranges": "bytes"}
+    spec = (request.headers.get("range") or "").strip()
+    if spec.startswith("bytes="):
+        first = spec.split("=", 1)[1].split(",")[0]
+        left, _, right = first.partition("-")
+        if left:
+            start = int(left)
+        if right:
+            end = min(int(right), size - 1)
+        elif not left:
+            start = max(0, size - int(right or 0))
+        status = 206
+        headers["content-range"] = f"bytes {start}-{end}/{size}"
+    length = max(0, end - start + 1)
+    headers["content-length"] = str(length)
+    if filename:
+        headers["content-disposition"] = f'attachment; filename="{filename}"'
+
+    def body():
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = handle.read(min(1 << 16, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(body(), status_code=status, media_type=media_type, headers=headers)
+
+
+def local_file(job: dict) -> Path | None:
+    path = job.get("local_path")
+    if path and Path(path).exists():
+        return Path(path)
+    return None
+
+
 @app.get("/api/video/{job_id}")
 def video(job_id: str, request: Request):
     job = JOBS.get(job_id)
     if not job or not job["file_path"]:
         raise HTTPException(404, "no video for this job")
+    stored = local_file(job)
+    if stored:
+        return serve_disk(stored, request, "video/mp4")
     upstream = upstream_file(job, request.headers.get("range"))
     if upstream.status_code >= 400:
         upstream.close()
@@ -537,6 +630,9 @@ def download(job_id: str, request: Request):
     job = JOBS.get(job_id)
     if not job or not job["file_path"]:
         raise HTTPException(404, "no file for this job")
+    stored = local_file(job)
+    if stored:
+        return serve_disk(stored, request, "application/octet-stream", job["filename"] or "video.mp4")
     upstream = upstream_file(job, request.headers.get("range"))
     if upstream.status_code >= 400:
         upstream.close()

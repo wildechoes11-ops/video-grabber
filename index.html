@@ -64,6 +64,8 @@
   button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
   button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
 
+  .chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+  .chk input { accent-color: var(--accent); margin: 0; }
   .preview { display: flex; gap: 12px; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #0d1017; }
   .preview img { width: 150px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: #000; flex: 0 0 auto; }
   .pv-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
@@ -130,9 +132,16 @@
       <select id="maxmin" title="Capture length for live streams">
         <option value="1">1 min</option>
         <option value="5">5 min</option>
-        <option value="15" selected>15 min</option>
+        <option value="15">15 min</option>
         <option value="30">30 min</option>
+        <option value="60">1 hour</option>
+        <option value="120">2 hours</option>
+        <option value="240">4 hours</option>
+        <option value="480" selected>8 hours</option>
       </select>
+      <label class="chk" title="Record from the start of the stream, not from now">
+        <input type="checkbox" id="whole" /> whole
+      </label>
       <button id="go">Grab</button>
       <button id="halt" class="ghost" disabled>Stop</button>
     </div>
@@ -151,7 +160,7 @@
       <span>size <b id="m-size">—</b></span>
       <span>speed <b id="m-speed">—</b></span>
     </div>
-    <p class="hint" id="hint">Live links start from the live edge. The <b>min</b> selector caps how long it records.</p>
+    <p class="hint" id="hint">Live links start from the live edge. The <b>min</b> selector caps how long it records; tick <b>whole</b> to record from the start. Finished files are stored on the server.</p>
   </div>
 
   <div class="card hidden" id="live-card">
@@ -266,12 +275,18 @@ async function start() {
     const r = await fetch("/api/start", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url, max_minutes: Number($("maxmin").value) }),
+      body: JSON.stringify({
+        url,
+        max_minutes: Number($("maxmin").value),
+        whole: $("whole").checked,
+      }),
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || "could not start");
     jobId = data.job_id;
-    $("hint").textContent = "live links start from the live edge — press Stop when you have enough.";
+    $("hint").textContent = $("whole").checked
+      ? "recording from the start of the stream — this runs until the stream ends or the cap."
+      : "live links start from the live edge — press Stop when you have enough.";
     clearInterval(timer);
     timer = setInterval(poll, 1000);
     poll();
